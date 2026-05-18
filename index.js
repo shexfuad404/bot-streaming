@@ -4,33 +4,52 @@ const { MongoClient } = require('mongodb');
 const { registerCommands, handleInteraction } = require('./commands/commands');
 const { spawn } = require('child_process');
 const path = require('path');
-const config = JSON.parse(fs.readFileSync('./config.json'));
+const { createLocalDb } = require('./localDb');
 
-// ڕێکخستنی مۆنگۆ
-const MONGO_URI = config.mongoUri || "mongodb://localhost:27017";
+// Load config and use environment variables as fallback
+let config;
+try {
+  config = JSON.parse(fs.readFileSync('./config.json'));
+} catch (err) {
+  console.error('❌ Error reading config.json:', err.message);
+  process.exit(1);
+}
+
+// Use environment variables for sensitive data
+config.token = process.env.DISCORD_TOKEN || config.token;
+config.mongoUri = process.env.MONGO_URI || config.mongoUri || "mongodb://127.0.0.1:27017";
+
+if (!config.token || config.token === 'YOUR_BOT_TOKEN_HERE') {
+  console.error('❌ CRITICAL: No valid Discord token found! Set DISCORD_TOKEN env var or update config.json');
+  process.exit(1);
+}
+
 const DB_NAME = "discord_manager";
+const LOCAL_DB_PATH = path.join(__dirname, 'local-db.json');
 let db;
 
-// دروستکردنی کلاینتی بۆتی سەرەکی
+// Create Discord client with proper intents
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
 async function initMongoDB() {
   try {
-    const mongoClient = new MongoClient(MONGO_URI);
+    const mongoClient = new MongoClient(config.mongoUri);
     await mongoClient.connect();
     db = mongoClient.db(DB_NAME);
-    console.log('[MongoDB] بە سەرکەوتوویی گرێدرا.');
-    
-    // لۆگین کردنی بۆتی سەرەکی دوای بەستنەوەی داتابەیس
-    client.login(config.token);
+    console.log('✅ [MongoDB] Connected successfully');
   } catch (error) {
-    console.error('[MongoDB Error]:', error.message);
-    process.exit(1);
+    console.error('❌ [MongoDB Error]:', error.message);
+    console.warn('⚠️  [MongoDB] Falling back to local JSON file');
+    db = createLocalDb(LOCAL_DB_PATH);
+    console.log('✅ [LocalDB] JSON backup ready');
   }
+
+  // Login after database is ready
+  client.login(config.token);
 }
 
-client.once('ready', async () => {
-  console.log('Main bot is ready!');
+client.once('clientReady', async () => {
+  console.log('✅ Main bot is ready!');
   registerCommands(); // تۆمارکردنی فەرمانەکان
 
   try {
@@ -60,9 +79,30 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', (interaction) => {
-  // ناردنی کۆنتێکستی داتابەیس بۆ هاندلەرەکە ئەگەر پێویست بوو
+  // Pass database context to handler
   handleInteraction(interaction, client, db); 
 });
 
-// دەستپێکردنی پڕۆژەکە لە داتابەیسەوە
+// Add global error handlers
+client.on('error', (error) => {
+  console.error('❌ [Discord Client Error]:', error.message);
+});
+
+client.on('warn', (info) => {
+  console.warn('⚠️  [Discord Client Warning]:', info);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  client.destroy();
+  process.exit(0);
+});
+
+// Unhandled errors
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled Rejection:', reason);
+});
+
+// Start the bot
 initMongoDB();
