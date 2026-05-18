@@ -9,7 +9,7 @@ if (!token || !channelId) {
   process.exit(1);
 }
 
-// 🛠️ گرنگترین بەش بۆ کەمکردنەوەی ڕام (RAM) بۆ کەمتر لە 5MB (کوشتنی هەموو کاشەکان)
+// 🛠️ بەشی کەمکردنەوەی ڕام بۆ خوار 5MB
 const client = new Client({
   checkUpdate: false,
   makeCache: Options.cacheWithLimits({
@@ -25,30 +25,28 @@ const client = new Client({
     StageInstanceManager: 0,
     VoiceStateManager: 0
   }),
-  intents: [ 1, 128 ] // تەنها GUILDS و GUILD_VOICE_STATES چالاک دەکات بۆ ئەوەی چاتەکان ڕام نەبەن
+  intents: [ 1, 128 ]
 });
 
 let connection = null;
 
-// 🔥 چارەسەری ئامادەکراوی ئەو ئێرۆرەی دیسکۆرد (Cannot read properties of null reading 'all')
-const ClientUserSettingManager = require('discord.js-selfbot-v13/src/managers/ClientUserSettingManager');
-try {
-  ClientUserSettingManager.prototype._patch = function(data) {
-    if (data && !data.friend_source_flags) {
-      data.friend_source_flags = { all: false, mutual_friends: false, mutual_guilds: false };
-    }
-  };
-} catch (e) {}
+// 🔥 چارەسەری داینامیکی ئێرۆرە نوێیەکەی دیسکۆرد بەبێ بەکارهێنانی ڕێڕەوی فۆڵدەر
+client.on('shardReady', (shardId, unavailableGuilds) => {
+  if (client.user && client.user.settings) {
+    client.user.settings._patch = function(data) {
+      if (data && !data.friend_source_flags) {
+        data.friend_source_flags = { all: false, mutual_friends: false, mutual_guilds: false };
+      }
+    };
+  }
+});
 
 client.once('ready', async () => {
   console.log(`Bot with token ${token.substring(0, 10)}... is ready!`);
-  
   client.user.setStatus("idle");
 
   try {
     const channel = await client.channels.fetch(channelId);
-    
-    // Join the voice channel
     await joinChannel(channel);
   } catch (error) {
     console.error(`Error fetching the channel: ${error}`);
@@ -67,14 +65,13 @@ async function joinChannel(channel) {
 
     console.log(`Joined the voice channel: ${channelId}`);
 
-    // Connection event listeners
     connection.on('stateChange', (oldState, newState) => {
       console.log(`Connection state changed: ${newState.status}`);
       if (newState.status === 'Disconnected') {
-        console.log(`Disconnected from voice channel. Attempting to reconnect in 5 seconds...`);
+        console.log(`Disconnected. Reconnecting in 5 seconds...`);
         setTimeout(async () => {
           try {
-            await joinChannel(channel); // Attempt to reconnect
+            await joinChannel(channel);
           } catch (error) {
             console.error(`Reconnection failed: ${error}`);
           }
@@ -82,20 +79,13 @@ async function joinChannel(channel) {
       }
     });
 
-    connection.on('error', (error) => {
-      console.error(`Voice connection error: ${error}`);
-    });
-
-    connection.on('disconnect', (disconnectReason) => {
-      console.log(`Disconnected from voice channel: ${disconnectReason}`);
-    });
+    connection.on('error', (error) => console.error(`Voice error: ${error}`));
   } catch (error) {
-    console.error(`Error joining the voice channel: ${error}`);
+    console.error(`Error joining voice: ${error}`);
   }
 }
 
-// Log in the bot
 client.login(token).catch(err => {
-  console.error(`Failed to login for sub-bot: ${err.message}`);
+  console.error(`Failed to login: ${err.message}`);
   process.exit(1);
 });
